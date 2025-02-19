@@ -30,74 +30,74 @@ interface ExtWebSocket extends WebSocket {
 var clients = new Map<string, any>();
 
 wss.on("connection", (ws: ExtWebSocket, req) => {
-    ws.on("error", console.error);
-
+    // ======================== Origin Check ========================
     const origin = req.headers.origin;
-    console.log('WebSocket connection from origin:', origin);
+    console.log('[WebSocket] connection from origin:', origin);
 
-    const id = uuidv4();
+    // ======================== ID Generate ========================
+    const id = uuidv4();    
+
     ws.id = id;
 	ws.isAlive = true;
 
-	clients.set(ws.id, {"pos":[0,0],"ws":ws,"col":{}});
+    // ======================== ID Generate ========================
+	clients.set(ws.id, {pos: [0, 0], "ws":ws});
+	// console.log("[WebSocket] New Client Added", ws.id); 
 
-	console.log("New Client Added ", ws.id); 
+	ws.send(JSON.stringify({type:"initial_id", id}));
 
-	ws.send(JSON.stringify({"command":"getID", "val": ws.id }));
+    broadcast({ type: "player_joined", id: id, "pos": [0, 0]});
+    console.log(`[Broadcat]: user ${id} joined`,); 
 
 	ws.on('message', message => {
-            let msg_str = message.toString().replace(/[^A-Za-z 0-9 \.,\?""!@#\$%\^&\*\(\)-_=\+;:<>\/\\\|\}\{\[\]`~]*/g, ''); 
+        let data = JSON.parse(message.toString());
+        console.log("message in!!", data);
 
-            if (msg_str.indexOf('{') !== 0) {
-                msg_str = msg_str.substring(msg_str.indexOf('{'))
-            }
-
-            let obj = JSON.parse(msg_str);
-
-            if (obj.command === "ping") { 
-                console.log('got ping request at: ',obj.val) 
-                ws.send(JSON.stringify({"command":"pong","val": obj.val}));
-            } else if (obj.command === "pong") {
-                ws.isAlive = true;
-            } else if (obj.command === "chat") {
-                sendAll(JSON.stringify({"command":"chat", "val":obj.val}));
-            } else if (obj.command === "pos") {
-                console.log(clients.get(obj.id)["pos"]);
-                clients.get(obj.id)["pos"] = obj.val;
-                let packed = {"command": "clientPack", "val":packClients()}
-                sendAll(JSON.stringify(packed));
-            } else if (obj.command === "reg"){
-                // New user filled out name and color
-                clients.get(obj.id)["user"] = obj.user;
-                clients.get(obj.id)["col"] = obj.col;
-            } else {
-                ws.close();
-            }
+        if (data.type == "message") {
+            broadcast({ type: "message", id, data: message });
+            console.log(`[Broadcat]: message ${id}: ${message}`,); 
+        } else if (data.type == "update_pos") {
+            clients.get(data.id).pos = data["pos"];
+            broadcast({ type: "update_pos", id:id, pos: data["pos"]});
+            console.log(`[Broadcat]: update_pos ${id}: ${data["pos"]}`,); 
         }
-    );
+    });
+
+    ws.on("close", (message) => {
+        clients.delete(ws.id);
+        broadcast({ type: "player_leaved", id: ws.id})
+        console.log("User Disconnected")
+    });
+
+    ws.on("error", console.error);
 });
 
-const interval = setInterval(() => {
-    for (let [key, value] of clients) {
-        if (value.ws.isAlive === false){
-            let user_id = value.ws.id
+const broadcast = (data : object) =>{
+    const jsonData = JSON.stringify(data);
 
-            console.log(user_id," is dead");
-            
-            clients.delete(user_id);
-            return value.ws.terminate();
-        } else {
-            value.ws.isAlive = false;
-            value.ws.send(JSON.stringify({"command":"ping", "val":value.ws.id}));
+    for (let [_, value] of clients) {
+        if (value.ws.readyState === WebSocket.OPEN) {
+            value.ws.send(jsonData);
         }
     }
-}, 30000);
 
-const sendAll = (message: String) => {
-	for (let [key, value] of clients) {
-        value.ws.send(message);
-    }
 }
+
+// const interval = setInterval(() => {
+//     for (let [key, value] of clients) {
+//         if (value.ws.isAlive === false){
+//             let user_id = value.ws.id
+
+//             console.log(user_id," is dead");
+            
+//             clients.delete(user_id);
+//             return value.ws.terminate();
+//         } else {
+//             value.ws.isAlive = false;
+//             value.ws.send(JSON.stringify({"command":"ping", "val":value.ws.id}));
+//         }
+//     }
+// }, 30000);
 
 const packClients = () => {
 	let pack = new Map();
